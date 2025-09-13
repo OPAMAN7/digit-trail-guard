@@ -109,7 +109,7 @@ export const Home = () => {
         </div>
         <Button 
           onClick={handleScan}
-          className="w-full h-12 rounded-2xl bg-gradient-to-r from-primary to-accent hover:opacity-90 glow-primary animate-pulse-glow"
+          className="w-full h-12 rounded-2xl bg-gradient-to-r from-primary to-accent hover:opacity-90 glow-primary"
           disabled={!email}
         >
           Start Privacy Scan
