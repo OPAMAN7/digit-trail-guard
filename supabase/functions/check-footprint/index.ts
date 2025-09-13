@@ -42,12 +42,23 @@ async function checkHaveIBeenPwned(email: string): Promise<any[]> {
   const cached = getCachedData(cacheKey);
   if (cached) return cached;
 
+  // If no API key is configured, skip HIBP breaches gracefully (prevents 401)
+  if (!HIBP_API_KEY) {
+    console.warn('HIBP_API_KEY not set - skipping HIBP breach check');
+    setCachedData(cacheKey, []);
+    return [];
+  }
+
   try {
-    // Using free tier API - no API key required
-    const response = await fetch(`https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}?truncateResponse=false`, {
-      headers: {
-        'User-Agent': 'DigitalFootprintChecker-FreeApp'
-      },
+    const headers: Record<string, string> = {
+      'User-Agent': 'DigitalFootprintChecker/1.0 (Lovable Edge Function)'
+    };
+    // Use API key when available
+    headers['hibp-api-key'] = HIBP_API_KEY;
+
+    const url = `https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}?truncateResponse=false`;
+    const response = await fetch(url, {
+      headers,
       signal: AbortSignal.timeout(15000)
     });
 
@@ -59,22 +70,17 @@ async function checkHaveIBeenPwned(email: string): Promise<any[]> {
     if (response.status === 429) {
       // Rate limited - wait and retry once
       await new Promise(resolve => setTimeout(resolve, 2000));
-      const retryResponse = await fetch(`https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}?truncateResponse=false`, {
-        headers: {
-          'User-Agent': 'DigitalFootprintChecker-FreeApp'
-        },
-        signal: AbortSignal.timeout(15000)
-      });
-      
+      const retryResponse = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+
       if (retryResponse.status === 404) {
         setCachedData(cacheKey, []);
         return [];
       }
-      
+
       if (!retryResponse.ok) {
         throw new Error(`HIBP API error: ${retryResponse.status}`);
       }
-      
+
       const breaches = await retryResponse.json();
       setCachedData(cacheKey, breaches);
       return breaches;
@@ -89,7 +95,7 @@ async function checkHaveIBeenPwned(email: string): Promise<any[]> {
     return breaches;
   } catch (error) {
     console.error('HaveIBeenPwned API error:', error);
-    // Don't throw error, return empty array to continue with Hunter.io data
+    // Don't throw error, return empty array to continue with other data sources
     return [];
   }
 }
@@ -101,29 +107,31 @@ async function checkHunterIO(email: string): Promise<any> {
 
   try {
     const domain = email.split('@')[1];
-    
-    // Call discover API to get domain information and emails
-    const discoverResponse = await fetch(`https://api.hunter.io/v2/discover?domain=${domain}&api_key=${HUNTER_API_KEY}`, {
-      signal: AbortSignal.timeout(10000)
-    });
 
-    if (!discoverResponse.ok) {
-      throw new Error(`Hunter.io Discover API error: ${discoverResponse.status}`);
+    // Discover API - may return 404 if no data for the domain
+    const discoverUrl = `https://api.hunter.io/v2/discover?domain=${domain}&api_key=${HUNTER_API_KEY}`;
+    const discoverResponse = await fetch(discoverUrl, { signal: AbortSignal.timeout(10000) });
+
+    let discoverData: any = { data: { emails: [] } };
+    if (discoverResponse.status === 404) {
+      discoverData = { data: { emails: [] } };
+    } else if (discoverResponse.ok) {
+      discoverData = await discoverResponse.json();
+    } else {
+      console.warn(`Hunter.io Discover returned ${discoverResponse.status} for ${domain}`);
     }
 
-    const discoverData = await discoverResponse.json();
-    
-    // Try to get additional domain verification data
-    const verifyResponse = await fetch(`https://api.hunter.io/v2/domain-search?domain=${domain}&api_key=${HUNTER_API_KEY}`, {
-      signal: AbortSignal.timeout(10000)
-    });
-    
-    let verifyData = null;
+    // Domain Search for additional context
+    const domainSearchUrl = `https://api.hunter.io/v2/domain-search?domain=${domain}&api_key=${HUNTER_API_KEY}`;
+    const verifyResponse = await fetch(domainSearchUrl, { signal: AbortSignal.timeout(10000) });
+
+    let verifyData: any = null;
     if (verifyResponse.ok) {
       verifyData = await verifyResponse.json();
+    } else if (verifyResponse.status !== 404) {
+      console.warn(`Hunter.io Domain Search returned ${verifyResponse.status} for ${domain}`);
     }
 
-    // Combine the data
     const combinedData = {
       discover: discoverData,
       domain_search: verifyData
@@ -133,11 +141,37 @@ async function checkHunterIO(email: string): Promise<any> {
     return combinedData;
   } catch (error) {
     console.error('Hunter.io API error:', error);
-    throw error;
+    // Return empty structure so we can continue with other data sources
+    return { discover: { data: { emails: [] } }, domain_search: null };
   }
 }
 
-function calculatePrivacyScore(breaches: any[], hunterData: any): number {
+async function checkEmailRep(email: string): Promise<any | null> {
+  const cacheKey = `emailrep_${email}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const response = await fetch(`https://emailrep.io/${encodeURIComponent(email)}`, {
+      headers: { 'User-Agent': 'DigitalFootprintChecker/1.0 (Lovable Edge Function)' },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!response.ok) {
+      console.warn(`EmailRep returned status ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    setCachedData(cacheKey, data);
+    return data;
+  } catch (error) {
+    console.error('EmailRep API error:', error);
+    return null;
+  }
+}
+
+function calculatePrivacyScore(breaches: any[], hunterData: any, emailRep: any | null): number {
   let score = 100;
 
   // Deduct points for breaches
@@ -157,17 +191,19 @@ function calculatePrivacyScore(breaches: any[], hunterData: any): number {
     score -= Math.min(domainEmails * 3, 20);
   }
 
-  // Deduct points for domain exposure
-  const domain = hunterData?.discover?.data?.domain || hunterData?.domain_search?.data?.domain;
-  if (domain?.webmail === false) {
-    score -= 10;
+  // Deduct based on EmailRep risk indicators
+  if (emailRep) {
+    if (emailRep.suspicious === true) score -= 20;
+    if (emailRep.details?.credentials_leaked === true) score -= 20;
+    if (emailRep.details?.malicious_activity === true) score -= 10;
+    if (emailRep.details?.blacklisted === true) score -= 15;
   }
 
   return Math.max(score, 0);
 }
 
-function generateRecommendations(breaches: any[], hunterData: any): string[] {
-  const recommendations = [];
+function generateRecommendations(breaches: any[], hunterData: any, emailRep: any | null): string[] {
+  const recommendations: string[] = [];
 
   if (breaches.length > 0) {
     recommendations.push('Change passwords for affected accounts immediately');
@@ -176,19 +212,19 @@ function generateRecommendations(breaches: any[], hunterData: any): string[] {
   }
 
   const totalEmails = (hunterData?.discover?.data?.emails?.length || 0) + (hunterData?.domain_search?.data?.emails?.length || 0);
-  
   if (totalEmails > 0) {
     recommendations.push('Consider using a professional email for business communications only');
     recommendations.push('Review your email privacy settings');
     recommendations.push('Monitor for unauthorized use of your email on public platforms');
   }
 
-  const domain = hunterData?.discover?.data?.domain || hunterData?.domain_search?.data?.domain;
-  if (domain && !domain.webmail) {
-    recommendations.push('Review your company\'s email exposure policies');
+  if (emailRep) {
+    if (emailRep.suspicious === true) recommendations.push('Email appears suspicious on some checks — review public profiles linked to it');
+    if (emailRep.details?.credentials_leaked === true) recommendations.push('Your email appears in leaked credentials — reset passwords and enable 2FA');
+    if (emailRep.details?.blacklisted === true) recommendations.push('Your email is blacklisted by some services — investigate recent activity');
   }
 
-  if (breaches.length === 0 && totalEmails === 0) {
+  if (breaches.length === 0 && totalEmails === 0 && !emailRep?.suspicious) {
     recommendations.push('Your digital footprint appears minimal - maintain good privacy practices');
     recommendations.push('Use unique passwords for each account');
   }
@@ -233,11 +269,15 @@ serve(async (req) => {
     const hunterData = await checkHunterIO(email);
     console.log('Hunter.io data retrieved');
 
+    // Check EmailRep for reputation/risk
+    const emailRep = await checkEmailRep(email);
+    console.log('EmailRep data retrieved');
+
     // Calculate privacy score
-    const score = calculatePrivacyScore(breaches, hunterData);
+    const score = calculatePrivacyScore(breaches, hunterData, emailRep);
 
     // Generate recommendations
-    const recommendations = generateRecommendations(breaches, hunterData);
+    const recommendations = generateRecommendations(breaches, hunterData, emailRep);
 
     // Extract data from Hunter.io responses
     const discoverEmails = hunterData?.discover?.data?.emails || [];
@@ -269,8 +309,9 @@ serve(async (req) => {
         discover_emails: discoverEmails,
         domain_search_emails: domainEmails
       },
+      emailrep: emailRep || null,
       recommendations,
-      summary: `Found ${breaches.length} data breaches and ${totalEmails} public email exposures. Privacy score: ${score}/100.`
+      summary: `Found ${breaches.length} data breaches and ${totalEmails} public email exposures. Privacy score: ${score}/100.${emailRep?.reputation ? ' Reputation: ' + emailRep.reputation : ''}`
     };
 
     // Store in database if user_id provided
