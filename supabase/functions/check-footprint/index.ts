@@ -76,17 +76,36 @@ async function checkHunterIO(email: string): Promise<any> {
 
   try {
     const domain = email.split('@')[1];
+    
+    // Call discover API to get domain information and emails
     const discoverResponse = await fetch(`https://api.hunter.io/v2/discover?domain=${domain}&api_key=${HUNTER_API_KEY}`, {
       signal: AbortSignal.timeout(10000)
     });
 
     if (!discoverResponse.ok) {
-      throw new Error(`Hunter.io API error: ${discoverResponse.status}`);
+      throw new Error(`Hunter.io Discover API error: ${discoverResponse.status}`);
     }
 
     const discoverData = await discoverResponse.json();
-    setCachedData(cacheKey, discoverData);
-    return discoverData;
+    
+    // Try to get additional domain verification data
+    const verifyResponse = await fetch(`https://api.hunter.io/v2/domain-search?domain=${domain}&api_key=${HUNTER_API_KEY}`, {
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    let verifyData = null;
+    if (verifyResponse.ok) {
+      verifyData = await verifyResponse.json();
+    }
+
+    // Combine the data
+    const combinedData = {
+      discover: discoverData,
+      domain_search: verifyData
+    };
+
+    setCachedData(cacheKey, combinedData);
+    return combinedData;
   } catch (error) {
     console.error('Hunter.io API error:', error);
     throw error;
@@ -101,13 +120,21 @@ function calculatePrivacyScore(breaches: any[], hunterData: any): number {
     score -= Math.min(breaches.length * 15, 70);
   }
 
-  // Deduct points for public exposure
-  if (hunterData?.data?.emails?.length > 0) {
-    score -= 20;
+  // Deduct points for public exposure from discover API
+  const discoverEmails = hunterData?.discover?.data?.emails?.length || 0;
+  if (discoverEmails > 0) {
+    score -= Math.min(discoverEmails * 5, 25);
+  }
+
+  // Deduct points for domain search results
+  const domainEmails = hunterData?.domain_search?.data?.emails?.length || 0;
+  if (domainEmails > 0) {
+    score -= Math.min(domainEmails * 3, 20);
   }
 
   // Deduct points for domain exposure
-  if (hunterData?.data?.domain?.webmail === false) {
+  const domain = hunterData?.discover?.data?.domain || hunterData?.domain_search?.data?.domain;
+  if (domain?.webmail === false) {
     score -= 10;
   }
 
@@ -123,12 +150,20 @@ function generateRecommendations(breaches: any[], hunterData: any): string[] {
     recommendations.push('Monitor your credit reports regularly');
   }
 
-  if (hunterData?.data?.emails?.length > 0) {
+  const totalEmails = (hunterData?.discover?.data?.emails?.length || 0) + (hunterData?.domain_search?.data?.emails?.length || 0);
+  
+  if (totalEmails > 0) {
     recommendations.push('Consider using a professional email for business communications only');
     recommendations.push('Review your email privacy settings');
+    recommendations.push('Monitor for unauthorized use of your email on public platforms');
   }
 
-  if (breaches.length === 0 && hunterData?.data?.emails?.length === 0) {
+  const domain = hunterData?.discover?.data?.domain || hunterData?.domain_search?.data?.domain;
+  if (domain && !domain.webmail) {
+    recommendations.push('Review your company\'s email exposure policies');
+  }
+
+  if (breaches.length === 0 && totalEmails === 0) {
     recommendations.push('Your digital footprint appears minimal - maintain good privacy practices');
     recommendations.push('Use unique passwords for each account');
   }
@@ -179,11 +214,18 @@ serve(async (req) => {
     // Generate recommendations
     const recommendations = generateRecommendations(breaches, hunterData);
 
+    // Extract data from Hunter.io responses
+    const discoverEmails = hunterData?.discover?.data?.emails || [];
+    const domainEmails = hunterData?.domain_search?.data?.emails || [];
+    const totalEmails = discoverEmails.length + domainEmails.length;
+    
+    const domain = hunterData?.discover?.data?.domain || hunterData?.domain_search?.data?.domain;
+
     const result = {
       email,
       score,
       breach_count: breaches.length,
-      platforms_found: hunterData?.data?.emails?.length || 0,
+      platforms_found: totalEmails,
       breaches: breaches.map((breach: any) => ({
         name: breach.Name,
         domain: breach.Domain,
@@ -193,15 +235,17 @@ serve(async (req) => {
         data_classes: breach.DataClasses
       })),
       hunter_data: {
-        domain: hunterData?.data?.domain?.domain || null,
-        emails_found: hunterData?.data?.emails?.length || 0,
-        confidence: hunterData?.data?.domain?.confidence || null,
-        country: hunterData?.data?.domain?.country || null,
-        disposable: hunterData?.data?.domain?.disposable || false,
-        webmail: hunterData?.data?.domain?.webmail || false
+        domain: domain?.domain || null,
+        emails_found: totalEmails,
+        confidence: domain?.confidence || null,
+        country: domain?.country || null,
+        disposable: domain?.disposable || false,
+        webmail: domain?.webmail || false,
+        discover_emails: discoverEmails,
+        domain_search_emails: domainEmails
       },
       recommendations,
-      summary: `Found ${breaches.length} data breaches and ${hunterData?.data?.emails?.length || 0} public email exposures. Privacy score: ${score}/100.`
+      summary: `Found ${breaches.length} data breaches and ${totalEmails} public email exposures. Privacy score: ${score}/100.`
     };
 
     // Store in database if user_id provided
@@ -213,7 +257,7 @@ serve(async (req) => {
             user_id,
             score,
             breach_count: breaches.length,
-            platforms_found: hunterData?.data?.emails?.length || 0,
+            platforms_found: totalEmails.toString(),
             summary: result.summary
           });
 

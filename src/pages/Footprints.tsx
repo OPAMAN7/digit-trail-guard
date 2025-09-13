@@ -1,6 +1,10 @@
-import { Eye, ExternalLink, AlertTriangle, Clock } from "lucide-react";
+import { Eye, ExternalLink, AlertTriangle, Clock, Search, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { supabase } from "@/integrations/supabase/client";
+import { useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 interface FootprintItem {
   id: string;
@@ -12,47 +16,42 @@ interface FootprintItem {
   category: string;
 }
 
-// Mock data - this will come from your backend
-const footprints: FootprintItem[] = [
-  {
-    id: "1",
-    siteName: "DataBroker Inc",
-    url: "databroker.com",
-    dataFound: ["Email", "Phone", "Address", "Age"],
-    lastSeen: "2024-01-15T10:30:00Z",
-    riskLevel: "high",
-    category: "Data Broker"
-  },
-  {
-    id: "2", 
-    siteName: "Social Network X",
-    url: "socialx.com",
-    dataFound: ["Email", "Profile Photo", "Bio"],
-    lastSeen: "2024-01-14T15:45:00Z",
-    riskLevel: "medium",
-    category: "Social Media"
-  },
-  {
-    id: "3",
-    siteName: "Newsletter Service",
-    url: "newsletter.com", 
-    dataFound: ["Email Address"],
-    lastSeen: "2024-01-10T08:20:00Z",
-    riskLevel: "low",
-    category: "Marketing"
-  },
-  {
-    id: "4",
-    siteName: "Shopping Platform",
-    url: "shop.com",
-    dataFound: ["Email", "Purchase History"],
-    lastSeen: "2024-01-12T19:15:00Z",
-    riskLevel: "medium",
-    category: "E-commerce"
-  }
-];
+interface BreachData {
+  name: string;
+  domain: string;
+  breach_date: string;
+  pwn_count: number;
+  description: string;
+  data_classes: string[];
+}
+
+interface HunterData {
+  domain: string | null;
+  emails_found: number;
+  confidence: number | null;
+  country: string | null;
+  disposable: boolean;
+  webmail: boolean;
+}
+
+interface FootprintResult {
+  email: string;
+  score: number;
+  breach_count: number;
+  platforms_found: number;
+  breaches: BreachData[];
+  hunter_data: HunterData;
+  recommendations: string[];
+  summary: string;
+}
 
 export const Footprints = () => {
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [footprintData, setFootprintData] = useState<FootprintResult | null>(null);
+  const [footprints, setFootprints] = useState<FootprintItem[]>([]);
+  const { toast } = useToast();
+
   const formatDate = (timestamp: string) => {
     return new Date(timestamp).toLocaleDateString("en-US", {
       month: "short",
@@ -60,6 +59,73 @@ export const Footprints = () => {
       hour: "2-digit",
       minute: "2-digit"
     });
+  };
+
+  const searchFootprint = async () => {
+    if (!email) {
+      toast({
+        title: "Email Required",
+        description: "Please enter an email address to search",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('check-footprint', {
+        body: { email }
+      });
+
+      if (error) throw error;
+
+      setFootprintData(data);
+      
+      // Convert API data to FootprintItem format
+      const footprintItems: FootprintItem[] = [];
+      
+      // Add breaches as footprint items
+      data.breaches.forEach((breach: BreachData, index: number) => {
+        footprintItems.push({
+          id: `breach-${index}`,
+          siteName: breach.name,
+          url: breach.domain,
+          dataFound: breach.data_classes,
+          lastSeen: new Date(breach.breach_date).toISOString(),
+          riskLevel: breach.pwn_count > 1000000 ? "high" : breach.pwn_count > 100000 ? "medium" : "low",
+          category: "Data Breach"
+        });
+      });
+
+      // Add Hunter.io domain data as footprint item
+      if (data.hunter_data.domain) {
+        footprintItems.push({
+          id: "hunter-domain",
+          siteName: data.hunter_data.domain,
+          url: data.hunter_data.domain,
+          dataFound: ["Email Address", "Domain Information"],
+          lastSeen: new Date().toISOString(),
+          riskLevel: data.hunter_data.disposable ? "low" : data.hunter_data.webmail ? "medium" : "high",
+          category: data.hunter_data.webmail ? "Webmail" : "Corporate Domain"
+        });
+      }
+
+      setFootprints(footprintItems);
+
+      toast({
+        title: "Search Complete",
+        description: `Found ${data.breach_count} breaches and ${data.platforms_found} platforms`,
+      });
+    } catch (error) {
+      console.error('Search error:', error);
+      toast({
+        title: "Search Failed",
+        description: "Failed to search digital footprint. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getRiskBadgeClass = (level: string) => {
@@ -89,29 +155,72 @@ export const Footprints = () => {
         </div>
         <h1 className="text-xl font-semibold">Digital Footprints</h1>
         <p className="text-muted-foreground text-sm">
-          Detailed view of where your data was found online
+          Search for your digital footprint across breaches and platforms
         </p>
       </div>
 
-      {/* Summary Stats */}
-      <div className="grid grid-cols-3 gap-sm">
-        <div className="glass p-sm rounded-2xl text-center">
-          <div className="text-lg font-bold text-destructive">{footprints.filter(f => f.riskLevel === "high").length}</div>
-          <div className="text-xs text-muted-foreground">High Risk</div>
-        </div>
-        <div className="glass p-sm rounded-2xl text-center">
-          <div className="text-lg font-bold text-yellow-500">{footprints.filter(f => f.riskLevel === "medium").length}</div>
-          <div className="text-xs text-muted-foreground">Medium Risk</div>
-        </div>
-        <div className="glass p-sm rounded-2xl text-center">
-          <div className="text-lg font-bold text-green-500">{footprints.filter(f => f.riskLevel === "low").length}</div>
-          <div className="text-xs text-muted-foreground">Low Risk</div>
+      {/* Search Form */}
+      <div className="glass p-md rounded-2xl space-y-sm">
+        <div className="flex gap-sm">
+          <Input
+            type="email"
+            placeholder="Enter email address to search..."
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="flex-1"
+            disabled={loading}
+          />
+          <Button onClick={searchFootprint} disabled={loading || !email}>
+            {loading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Search className="w-4 h-4" />
+            )}
+          </Button>
         </div>
       </div>
 
+      {footprintData && (
+        <div className="glass p-md rounded-2xl space-y-sm">
+          <h2 className="font-semibold">Privacy Score</h2>
+          <div className="flex items-center justify-between">
+            <div className="text-2xl font-bold">{footprintData.score}/100</div>
+            <Badge className={footprintData.score >= 80 ? "bg-green-500/20 text-green-500" : footprintData.score >= 60 ? "bg-yellow-500/20 text-yellow-500" : "bg-destructive/20 text-destructive"}>
+              {footprintData.score >= 80 ? "Good" : footprintData.score >= 60 ? "Fair" : "Poor"}
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">{footprintData.summary}</p>
+        </div>
+      )}
+
+      {footprints.length === 0 && !loading && (
+        <div className="text-center py-8 text-muted-foreground">
+          <p>Enter an email address above to search for digital footprints</p>
+        </div>
+      )}
+
+      {/* Summary Stats */}
+      {footprints.length > 0 && (
+        <div className="grid grid-cols-3 gap-sm">
+          <div className="glass p-sm rounded-2xl text-center">
+            <div className="text-lg font-bold text-destructive">{footprints.filter(f => f.riskLevel === "high").length}</div>
+            <div className="text-xs text-muted-foreground">High Risk</div>
+          </div>
+          <div className="glass p-sm rounded-2xl text-center">
+            <div className="text-lg font-bold text-yellow-500">{footprints.filter(f => f.riskLevel === "medium").length}</div>
+            <div className="text-xs text-muted-foreground">Medium Risk</div>
+          </div>
+          <div className="glass p-sm rounded-2xl text-center">
+            <div className="text-lg font-bold text-green-500">{footprints.filter(f => f.riskLevel === "low").length}</div>
+            <div className="text-xs text-muted-foreground">Low Risk</div>
+          </div>
+        </div>
+      )}
+
       {/* Footprints List */}
-      <div className="space-y-sm">
-        {footprints.map((footprint) => (
+      {footprints.length > 0 && (
+        <div className="space-y-sm">
+          {footprints.map((footprint) => (
           <div key={footprint.id} className="glass p-md rounded-2xl space-y-sm">
             {/* Header */}
             <div className="flex items-center justify-between">
@@ -161,7 +270,8 @@ export const Footprints = () => {
             )}
           </div>
         ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 };
