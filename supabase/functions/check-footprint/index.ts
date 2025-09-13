@@ -43,17 +43,41 @@ async function checkHaveIBeenPwned(email: string): Promise<any[]> {
   if (cached) return cached;
 
   try {
-    const response = await fetch(`https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}`, {
+    // Using free tier API - no API key required
+    const response = await fetch(`https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}?truncateResponse=false`, {
       headers: {
-        'hibp-api-key': HIBP_API_KEY!,
-        'User-Agent': 'DigitalFootprintChecker'
+        'User-Agent': 'DigitalFootprintChecker-FreeApp'
       },
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(15000)
     });
 
     if (response.status === 404) {
       setCachedData(cacheKey, []);
       return [];
+    }
+
+    if (response.status === 429) {
+      // Rate limited - wait and retry once
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      const retryResponse = await fetch(`https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}?truncateResponse=false`, {
+        headers: {
+          'User-Agent': 'DigitalFootprintChecker-FreeApp'
+        },
+        signal: AbortSignal.timeout(15000)
+      });
+      
+      if (retryResponse.status === 404) {
+        setCachedData(cacheKey, []);
+        return [];
+      }
+      
+      if (!retryResponse.ok) {
+        throw new Error(`HIBP API error: ${retryResponse.status}`);
+      }
+      
+      const breaches = await retryResponse.json();
+      setCachedData(cacheKey, breaches);
+      return breaches;
     }
 
     if (!response.ok) {
@@ -65,7 +89,8 @@ async function checkHaveIBeenPwned(email: string): Promise<any[]> {
     return breaches;
   } catch (error) {
     console.error('HaveIBeenPwned API error:', error);
-    throw error;
+    // Don't throw error, return empty array to continue with Hunter.io data
+    return [];
   }
 }
 
