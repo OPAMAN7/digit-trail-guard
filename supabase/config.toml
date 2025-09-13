@@ -1,1 +1,13 @@
 project_id = "powwusnypzguwjgwqamw"
+
+[functions.check-footprint]
+verify_jwt = false
+
+[functions.get-results]
+verify_jwt = false
+
+[functions.delete-data]
+verify_jwt = false
+
+[functions.health-check]
+verify_jwt = false
