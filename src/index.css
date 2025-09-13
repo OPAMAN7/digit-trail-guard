@@ -156,6 +156,21 @@ All colors MUST be HSL.
     background: linear-gradient(var(--gradient-card)) padding-box,
                 var(--gradient-primary) border-box;
   }
+
+  /* Button animations */
+  .btn-animate {
+    transition: all 0.3s ease;
+    transform: translateY(0);
+  }
+  
+  .btn-animate:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px hsl(var(--primary) / 0.3);
+  }
+  
+  .btn-animate:active {
+    transform: translateY(0);
+  }
 }
 
 @keyframes gradient-shift {

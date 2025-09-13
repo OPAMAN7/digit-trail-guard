@@ -109,7 +109,7 @@ export const Home = () => {
         </div>
         <Button 
           onClick={handleScan}
-          className="w-full h-12 rounded-2xl bg-gradient-to-r from-primary to-accent hover:opacity-90 glow-primary"
+          className="w-full h-12 rounded-2xl bg-gradient-to-r from-primary to-accent hover:opacity-90 glow-primary animate-pulse-glow"
           disabled={!email}
         >
           Start Privacy Scan
@@ -140,7 +140,9 @@ export const Home = () => {
           <div className="grid grid-cols-2 gap-sm">
             <div className="glass p-sm rounded-xl text-center">
               <div className="text-lg font-bold text-destructive">{scanResult.breach_count}</div>
-              <div className="text-xs text-muted-foreground">Data Breaches</div>
+              <div className="text-xs text-muted-foreground">
+                {scanResult.breach_count === 0 ? "No data breaches found in past 7 days" : "Data Breaches"}
+              </div>
             </div>
             <div className="glass p-sm rounded-xl text-center">
               <div className="text-lg font-bold text-accent">{scanResult.platforms_found}</div>
