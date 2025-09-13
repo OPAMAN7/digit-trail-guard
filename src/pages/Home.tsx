@@ -49,6 +49,8 @@ export const Home = () => {
       if (error) throw error;
 
       setScanResult(data);
+      // Save to localStorage for other pages to access
+      localStorage.setItem('latestScanResult', JSON.stringify(data));
       toast({
         title: "Scan Complete",
         description: `Found ${data.breach_count} breaches and ${data.platforms_found} platforms`,

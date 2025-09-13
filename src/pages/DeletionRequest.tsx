@@ -1,9 +1,11 @@
-import { useState } from "react";
-import { Trash2, Send, CheckCircle, AlertCircle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Trash2, Send, CheckCircle, AlertCircle, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { useNavigate } from "react-router-dom";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,36 +23,71 @@ interface DeletionSite {
   url: string;
   dataFound: string;
   riskLevel: "low" | "medium" | "high";
+  type: "breach" | "platform";
 }
 
-// Mock data - this will come from your backend
-const exposedSites: DeletionSite[] = [
-  {
-    name: "DataBroker Inc",
-    url: "databroker.com", 
-    dataFound: "Email, Phone, Address",
-    riskLevel: "high"
-  },
-  {
-    name: "Social Network X",
-    url: "socialx.com",
-    dataFound: "Email, Profile Photo",
-    riskLevel: "medium"
-  },
-  {
-    name: "Newsletter Service",
-    url: "newsletter.com",
-    dataFound: "Email Address",
-    riskLevel: "low"
-  }
-];
+interface ScanResult {
+  email: string;
+  score: number;
+  breach_count: number;
+  platforms_found: number;
+  breaches: any[];
+  hunter_data: any;
+  emailrep: any;
+  recommendations: string[];
+  summary: string;
+}
 
 export const DeletionRequest = () => {
   const [email, setEmail] = useState("");
   const [reason, setReason] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedSites, setSelectedSites] = useState<string[]>([]);
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [exposedSites, setExposedSites] = useState<DeletionSite[]>([]);
   const { toast } = useToast();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    // Get latest scan results from localStorage
+    const savedResult = localStorage.getItem('latestScanResult');
+    if (savedResult) {
+      const result = JSON.parse(savedResult);
+      setScanResult(result);
+      setEmail(result.email);
+      
+      // Convert scan results to deletion sites
+      const sites: DeletionSite[] = [];
+      
+      // Add breaches
+      result.breaches?.forEach((breach: any) => {
+        sites.push({
+          name: breach.name,
+          url: breach.domain || `${breach.name.toLowerCase().replace(/\s+/g, '')}.com`,
+          dataFound: breach.data_classes?.join(', ') || 'Personal Data',
+          riskLevel: breach.pwn_count > 1000000 ? 'high' : breach.pwn_count > 100000 ? 'medium' : 'low',
+          type: 'breach'
+        });
+      });
+      
+      // Add hunter.io discovered emails
+      result.hunter_data?.discover_emails?.forEach((emailData: any) => {
+        if (emailData.sources?.length > 0) {
+          emailData.sources.forEach((source: any) => {
+            sites.push({
+              name: source.domain || 'Unknown Platform',
+              url: source.uri || source.domain || 'unknown',
+              dataFound: 'Email Address, Public Profile',
+              riskLevel: source.still_on_page ? 'medium' : 'low',
+              type: 'platform'
+            });
+          });
+        }
+      });
+      
+      setExposedSites(sites);
+    }
+  }, []);
 
   const handleSiteToggle = (siteUrl: string) => {
     setSelectedSites(prev => 
@@ -72,17 +109,34 @@ export const DeletionRequest = () => {
 
     setIsSubmitting(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      setIsSubmitting(false);
+    try {
+      const { data, error } = await supabase.functions.invoke('delete-data', {
+        body: { 
+          email, 
+          sites: selectedSites,
+          reason: reason || 'GDPR data deletion request'
+        }
+      });
+
+      if (error) throw error;
+
       toast({
         title: "Deletion Request Sent",
         description: `Requests sent to ${selectedSites.length} sites. You'll receive confirmation emails.`
       });
+      
       setSelectedSites([]);
-      setEmail("");
       setReason("");
-    }, 2000);
+    } catch (error) {
+      console.error('Deletion request error:', error);
+      toast({
+        title: "Request Failed",
+        description: "Failed to send deletion requests. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const getRiskBadgeClass = (level: string) => {
@@ -94,12 +148,35 @@ export const DeletionRequest = () => {
     }
   };
 
+  if (!scanResult) {
+    return (
+      <div className="space-y-lg pt-lg">
+        <div className="text-center space-y-md">
+          <h1 className="text-xl font-semibold">Data Deletion Request</h1>
+          <div className="glass p-lg rounded-2xl">
+            <Search className="w-12 h-12 text-muted-foreground mx-auto mb-md" />
+            <p className="text-muted-foreground mb-md">
+              No scan results found. Please run a scan first to see where your data is exposed.
+            </p>
+            <Button 
+              onClick={() => navigate("/")}
+              className="bg-gradient-to-r from-primary to-accent hover:opacity-90"
+            >
+              <Search className="w-4 h-4 mr-2" />
+              Start Privacy Scan
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-lg pt-lg">
       <div className="text-center space-y-sm">
         <h1 className="text-xl font-semibold">Data Deletion Request</h1>
         <p className="text-muted-foreground text-sm">
-          Request removal of your personal data from exposed sites
+          Request removal of your personal data from {exposedSites.length} exposed sites
         </p>
       </div>
 
@@ -117,7 +194,15 @@ export const DeletionRequest = () => {
 
       {/* Sites List */}
       <div className="space-y-sm">
-        <h3 className="font-medium text-sm">Select sites to request deletion from:</h3>
+        <h3 className="font-medium text-sm">
+          Select sites to request deletion from ({exposedSites.length} found):
+        </h3>
+        
+        {exposedSites.length === 0 && (
+          <div className="glass p-md rounded-2xl text-center">
+            <p className="text-muted-foreground">No exposed sites found in your scan results.</p>
+          </div>
+        )}
         
         {exposedSites.map((site) => (
           <div
