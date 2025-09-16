@@ -47,6 +47,11 @@ interface FootprintResult {
   platforms_found: number;
   breaches: BreachData[];
   hunter_data: HunterData;
+  password_check?: {
+    is_pwned: boolean;
+    pwn_count: number;
+    checked: boolean;
+  };
   recommendations: string[];
   summary: string;
 }
@@ -281,15 +286,44 @@ export const Footprints = () => {
       )}
 
       {footprintData && (
-        <div className="glass p-md rounded-2xl space-y-sm">
-          <h2 className="font-semibold">Privacy Score</h2>
-          <div className="flex items-center justify-between">
-            <div className="text-2xl font-bold">{footprintData.score}/100</div>
-            <Badge className={footprintData.score >= 80 ? "bg-green-500/20 text-green-500" : footprintData.score >= 60 ? "bg-yellow-500/20 text-yellow-500" : "bg-destructive/20 text-destructive"}>
-              {footprintData.score >= 80 ? "Good" : footprintData.score >= 60 ? "Fair" : "Poor"}
-            </Badge>
+        <div className="space-y-sm">
+          {/* Privacy Score */}
+          <div className="glass p-md rounded-2xl space-y-sm">
+            <h2 className="font-semibold">Privacy Score</h2>
+            <div className="flex items-center justify-between">
+              <div className="text-2xl font-bold">{footprintData.score}/100</div>
+              <Badge className={footprintData.score >= 80 ? "bg-green-500/20 text-green-500" : footprintData.score >= 60 ? "bg-yellow-500/20 text-yellow-500" : "bg-destructive/20 text-destructive"}>
+                {footprintData.score >= 80 ? "Good" : footprintData.score >= 60 ? "Fair" : "Poor"}
+              </Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">{footprintData.summary}</p>
           </div>
-          <p className="text-sm text-muted-foreground">{footprintData.summary}</p>
+
+          {/* Password Security Check */}
+          {footprintData.password_check?.checked && (
+            <div className={`glass p-md rounded-2xl space-y-sm ${footprintData.password_check.is_pwned ? 'border-destructive/20' : 'border-green-500/20'}`}>
+              <h2 className="font-semibold flex items-center gap-2">
+                <AlertTriangle className={`w-5 h-5 ${footprintData.password_check.is_pwned ? 'text-destructive' : 'text-green-500'}`} />
+                Password Security
+              </h2>
+              <div className="flex items-center justify-between">
+                <div className={`text-lg font-bold ${footprintData.password_check.is_pwned ? 'text-destructive' : 'text-green-500'}`}>
+                  {footprintData.password_check.is_pwned ? '⚠️ COMPROMISED' : '✅ SECURE'}
+                </div>
+                {footprintData.password_check.is_pwned && (
+                  <Badge className="bg-destructive/20 text-destructive">
+                    {footprintData.password_check.pwn_count.toLocaleString()} breaches
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {footprintData.password_check.is_pwned 
+                  ? `Your password has been found in ${footprintData.password_check.pwn_count.toLocaleString()} known data breaches. Consider changing it immediately.`
+                  : 'Your password was not found in any known data breaches.'
+                }
+              </p>
+            </div>
+          )}
         </div>
       )}
 
