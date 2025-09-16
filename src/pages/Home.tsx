@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Shield, Clock, Trash2, TrendingUp, Eye, AlertTriangle } from "lucide-react";
+import { Search, Shield, Clock, Trash2, TrendingUp, Eye, AlertTriangle, Lock, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FeatureCard } from "@/components/FeatureCard";
@@ -17,12 +17,20 @@ interface ScanResult {
   platforms_found: number;
   breaches: any[];
   hunter_data: any;
+  password_check: {
+    is_pwned: boolean;
+    pwn_count: number;
+    checked: boolean;
+  };
   recommendations: string[];
   summary: string;
 }
 
 export const Home = () => {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [includePasswordCheck, setIncludePasswordCheck] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const navigate = useNavigate();
@@ -42,8 +50,13 @@ export const Home = () => {
     setScanResult(null);
     
     try {
+      const body: any = { email };
+      if (includePasswordCheck && password) {
+        body.password = password;
+      }
+
       const { data, error } = await supabase.functions.invoke('check-footprint', {
-        body: { email }
+        body
       });
 
       if (error) throw error;
@@ -51,9 +64,12 @@ export const Home = () => {
       setScanResult(data);
       // Save to localStorage for other pages to access
       localStorage.setItem('latestScanResult', JSON.stringify(data));
+      const passwordMsg = data.password_check?.checked && data.password_check?.is_pwned 
+        ? `, password compromised ${data.password_check.pwn_count} times` 
+        : '';
       toast({
         title: "Scan Complete",
-        description: `Found ${data.breach_count} breaches and ${data.platforms_found} platforms`,
+        description: `Found ${data.breach_count} breaches and ${data.platforms_found} platforms${passwordMsg}`,
       });
     } catch (error) {
       console.error('Scan error:', error);
@@ -107,6 +123,43 @@ export const Home = () => {
             className="pl-12 h-12 rounded-2xl glass border-gradient"
           />
         </div>
+
+        {/* Optional Password Check */}
+        <div className="space-y-xs">
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="include-password"
+              checked={includePasswordCheck}
+              onChange={(e) => setIncludePasswordCheck(e.target.checked)}
+              className="rounded border-2 border-primary/20"
+            />
+            <label htmlFor="include-password" className="text-sm text-muted-foreground">
+              Include password security check (optional)
+            </label>
+          </div>
+          
+          {includePasswordCheck && (
+            <div className="relative">
+              <Lock className="absolute left-sm top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+              <Input
+                type={showPassword ? "text" : "password"}
+                placeholder="Enter password to check if it's been compromised"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="pl-12 pr-12 h-12 rounded-2xl glass border-gradient"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-sm top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
+            </div>
+          )}
+        </div>
+
         <Button 
           onClick={handleScan}
           className="w-full h-12 rounded-2xl bg-gradient-to-r from-primary to-accent hover:opacity-90 glow-primary"
@@ -149,6 +202,21 @@ export const Home = () => {
               <div className="text-xs text-muted-foreground">Platforms Found</div>
             </div>
           </div>
+
+          {/* Password Check Result */}
+          {scanResult.password_check?.checked && (
+            <div className={`glass p-sm rounded-xl text-center ${scanResult.password_check.is_pwned ? 'border-destructive/20' : 'border-green-500/20'}`}>
+              <div className={`text-lg font-bold ${scanResult.password_check.is_pwned ? 'text-destructive' : 'text-green-500'}`}>
+                {scanResult.password_check.is_pwned ? `⚠️ COMPROMISED` : '✅ SECURE'}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {scanResult.password_check.is_pwned 
+                  ? `Password found in ${scanResult.password_check.pwn_count.toLocaleString()} breaches`
+                  : 'Password not found in known breaches'
+                }
+              </div>
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="grid grid-cols-2 gap-sm">

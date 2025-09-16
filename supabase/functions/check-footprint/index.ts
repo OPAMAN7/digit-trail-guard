@@ -171,7 +171,52 @@ async function checkEmailRep(email: string): Promise<any | null> {
   }
 }
 
-function calculatePrivacyScore(breaches: any[], hunterData: any, emailRep: any | null): number {
+async function checkPwnedPasswords(password: string): Promise<{ isPwned: boolean; pwnCount: number }> {
+  try {
+    // Generate SHA-1 hash of the password
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+
+    // Use k-anonymity: send only first 5 characters
+    const prefix = hashHex.substring(0, 5);
+    const suffix = hashHex.substring(5);
+
+    const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`, {
+      headers: { 
+        'User-Agent': 'DigitalFootprintChecker/1.0 (Lovable Edge Function)',
+        'Add-Padding': 'true' // Enable padding for enhanced privacy
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!response.ok) {
+      console.warn(`Pwned Passwords API returned status ${response.status}`);
+      return { isPwned: false, pwnCount: 0 };
+    }
+
+    const responseText = await response.text();
+    const lines = responseText.split('\n');
+
+    // Search for our hash suffix in the response
+    for (const line of lines) {
+      const [hashSuffix, countStr] = line.split(':');
+      if (hashSuffix === suffix) {
+        const count = parseInt(countStr || '0', 10);
+        return { isPwned: true, pwnCount: count };
+      }
+    }
+
+    return { isPwned: false, pwnCount: 0 };
+  } catch (error) {
+    console.error('Pwned Passwords API error:', error);
+    return { isPwned: false, pwnCount: 0 };
+  }
+}
+
+function calculatePrivacyScore(breaches: any[], hunterData: any, emailRep: any | null, passwordCheck?: { isPwned: boolean; pwnCount: number }): number {
   let score = 100;
 
   // Deduct points for breaches
@@ -199,10 +244,18 @@ function calculatePrivacyScore(breaches: any[], hunterData: any, emailRep: any |
     if (emailRep.details?.blacklisted === true) score -= 15;
   }
 
+  // Deduct points for pwned passwords
+  if (passwordCheck?.isPwned) {
+    if (passwordCheck.pwnCount > 100000) score -= 30; // Very common password
+    else if (passwordCheck.pwnCount > 10000) score -= 25; // Common password
+    else if (passwordCheck.pwnCount > 1000) score -= 20; // Moderately common
+    else score -= 15; // Less common but still pwned
+  }
+
   return Math.max(score, 0);
 }
 
-function generateRecommendations(breaches: any[], hunterData: any, emailRep: any | null): string[] {
+function generateRecommendations(breaches: any[], hunterData: any, emailRep: any | null, passwordCheck?: { isPwned: boolean; pwnCount: number }): string[] {
   const recommendations: string[] = [];
 
   if (breaches.length > 0) {
@@ -224,7 +277,19 @@ function generateRecommendations(breaches: any[], hunterData: any, emailRep: any
     if (emailRep.details?.blacklisted === true) recommendations.push('Your email is blacklisted by some services — investigate recent activity');
   }
 
-  if (breaches.length === 0 && totalEmails === 0 && !emailRep?.suspicious) {
+  if (passwordCheck?.isPwned) {
+    if (passwordCheck.pwnCount > 100000) {
+      recommendations.push(`Password has been compromised ${passwordCheck.pwnCount.toLocaleString()} times - change immediately`);
+    } else if (passwordCheck.pwnCount > 10000) {
+      recommendations.push(`Password appears in ${passwordCheck.pwnCount.toLocaleString()} breaches - highly recommended to change`);
+    } else {
+      recommendations.push(`Password found in ${passwordCheck.pwnCount.toLocaleString()} breaches - consider changing`);
+    }
+    recommendations.push('Use a unique, strong password that has not been compromised');
+    recommendations.push('Consider using a password manager to generate secure passwords');
+  }
+
+  if (breaches.length === 0 && totalEmails === 0 && !emailRep?.suspicious && !passwordCheck?.isPwned) {
     recommendations.push('Your digital footprint appears minimal - maintain good privacy practices');
     recommendations.push('Use unique passwords for each account');
   }
@@ -243,7 +308,7 @@ serve(async (req) => {
   }
 
   try {
-    const { email, user_id } = await req.json();
+    const { email, user_id, password } = await req.json();
 
     if (!email) {
       return new Response(JSON.stringify({ error: 'Email is required' }), {
@@ -273,11 +338,18 @@ serve(async (req) => {
     const emailRep = await checkEmailRep(email);
     console.log('EmailRep data retrieved');
 
+    // Check password if provided (optional for additional security analysis)
+    let passwordCheck = null;
+    if (password && typeof password === 'string' && password.length > 0) {
+      passwordCheck = await checkPwnedPasswords(password);
+      console.log(`Password check completed: ${passwordCheck.isPwned ? 'PWNED' : 'SAFE'}`);
+    }
+
     // Calculate privacy score
-    const score = calculatePrivacyScore(breaches, hunterData, emailRep);
+    const score = calculatePrivacyScore(breaches, hunterData, emailRep, passwordCheck);
 
     // Generate recommendations
-    const recommendations = generateRecommendations(breaches, hunterData, emailRep);
+    const recommendations = generateRecommendations(breaches, hunterData, emailRep, passwordCheck);
 
     // Extract data from Hunter.io responses
     const discoverEmails = hunterData?.discover?.data?.emails || [];
@@ -310,8 +382,13 @@ serve(async (req) => {
         domain_search_emails: domainEmails
       },
       emailrep: emailRep || null,
+      password_check: passwordCheck ? {
+        is_pwned: passwordCheck.isPwned,
+        pwn_count: passwordCheck.pwnCount,
+        checked: true
+      } : { checked: false },
       recommendations,
-      summary: `Found ${breaches.length} data breaches and ${totalEmails} public email exposures. Privacy score: ${score}/100.${emailRep?.reputation ? ' Reputation: ' + emailRep.reputation : ''}`
+      summary: `Found ${breaches.length} data breaches and ${totalEmails} public email exposures${passwordCheck?.isPwned ? `, password compromised ${passwordCheck.pwnCount} times` : ''}. Privacy score: ${score}/100.${emailRep?.reputation ? ' Reputation: ' + emailRep.reputation : ''}`
     };
 
     // Store in database if user_id provided
