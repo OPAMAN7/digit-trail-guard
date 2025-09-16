@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { supabase } from "@/integrations/supabase/client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 
 interface FootprintItem {
@@ -36,6 +36,8 @@ interface HunterData {
   country: string | null;
   disposable: boolean;
   webmail: boolean;
+  discover_emails?: any[];
+  domain_search_emails?: any[];
 }
 
 interface FootprintResult {
@@ -55,7 +57,103 @@ export const Footprints = () => {
   const [footprintData, setFootprintData] = useState<FootprintResult | null>(null);
   const [footprints, setFootprints] = useState<FootprintItem[]>([]);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const [showSearchForm, setShowSearchForm] = useState(false);
   const { toast } = useToast();
+
+  // Load existing scan results on component mount
+  useEffect(() => {
+    const savedResults = localStorage.getItem('latestScanResult');
+    if (savedResults) {
+      try {
+        const data = JSON.parse(savedResults);
+        loadFootprintData(data);
+        setEmail(data.email || "");
+      } catch (error) {
+        console.error('Error loading saved results:', error);
+        setShowSearchForm(true);
+      }
+    } else {
+      setShowSearchForm(true);
+    }
+  }, []);
+
+  const loadFootprintData = (data: FootprintResult) => {
+    setFootprintData(data);
+    
+    // Convert API data to FootprintItem format
+    const footprintItems: FootprintItem[] = [];
+    
+    // Add breaches as footprint items with detailed information
+    data.breaches.forEach((breach: BreachData, index: number) => {
+      footprintItems.push({
+        id: `breach-${index}`,
+        siteName: breach.name,
+        url: breach.domain || 'Unknown',
+        dataFound: breach.data_classes || ['Email'],
+        lastSeen: new Date(breach.breach_date).toISOString(),
+        riskLevel: breach.pwn_count > 10000000 ? "high" : breach.pwn_count > 1000000 ? "medium" : "low",
+        category: "Data Breach",
+        description: breach.description,
+        pwnCount: breach.pwn_count
+      });
+    });
+
+    // Add Hunter.io discovered emails as separate footprint items
+    if (data.hunter_data.discover_emails) {
+      data.hunter_data.discover_emails.forEach((emailData: any, index: number) => {
+        footprintItems.push({
+          id: `hunter-discover-${index}`,
+          siteName: emailData.domain || data.hunter_data.domain,
+          url: emailData.domain || data.hunter_data.domain,
+          dataFound: ["Email Address", "Public Profile", ...(emailData.sources || [])],
+          lastSeen: new Date(emailData.last_seen_on || Date.now()).toISOString(),
+          riskLevel: emailData.confidence > 90 ? "high" : emailData.confidence > 50 ? "medium" : "low",
+          category: "Public Directory",
+          confidence: emailData.confidence
+        });
+      });
+    }
+
+    // Add Hunter.io domain search results
+    if (data.hunter_data.domain_search_emails) {
+      data.hunter_data.domain_search_emails.forEach((emailData: any, index: number) => {
+        footprintItems.push({
+          id: `hunter-domain-${index}`,
+          siteName: `${emailData.first_name || ''} ${emailData.last_name || ''}`.trim() || emailData.value,
+          url: emailData.domain || data.hunter_data.domain,
+          dataFound: ["Email Address", "Name", "Position", "Phone"].filter(Boolean),
+          lastSeen: new Date().toISOString(),
+          riskLevel: emailData.confidence > 90 ? "high" : emailData.confidence > 50 ? "medium" : "low",
+          category: emailData.type === "personal" ? "Personal Email" : "Corporate Email",
+          confidence: emailData.confidence
+        });
+      });
+    }
+
+    // Add Hunter.io domain data as footprint item
+    if (data.hunter_data.domain) {
+      const domainRisk = data.hunter_data.disposable ? "low" : 
+                        data.hunter_data.webmail ? "medium" : "high";
+      
+      footprintItems.push({
+        id: "hunter-domain",
+        siteName: data.hunter_data.domain,
+        url: data.hunter_data.domain,
+        dataFound: [
+          "Domain Information", 
+          "Email Pattern",
+          ...(data.hunter_data.country ? [`Location: ${data.hunter_data.country}`] : []),
+          ...(data.hunter_data.disposable ? ["Disposable Email"] : []),
+          ...(data.hunter_data.webmail ? ["Webmail Service"] : ["Corporate Domain"])
+        ],
+        lastSeen: new Date().toISOString(),
+        riskLevel: domainRisk,
+        category: data.hunter_data.webmail ? "Webmail Provider" : "Corporate Domain"
+      });
+    }
+
+    setFootprints(footprintItems);
+  };
 
   const formatDate = (timestamp: string) => {
     return new Date(timestamp).toLocaleDateString("en-US", {
@@ -84,81 +182,9 @@ export const Footprints = () => {
 
       if (error) throw error;
 
-      setFootprintData(data);
-      
-      // Convert API data to FootprintItem format
-      const footprintItems: FootprintItem[] = [];
-      
-      // Add breaches as footprint items with detailed information
-      data.breaches.forEach((breach: BreachData, index: number) => {
-        footprintItems.push({
-          id: `breach-${index}`,
-          siteName: breach.name,
-          url: breach.domain || 'Unknown',
-          dataFound: breach.data_classes || ['Email'],
-          lastSeen: new Date(breach.breach_date).toISOString(),
-          riskLevel: breach.pwn_count > 10000000 ? "high" : breach.pwn_count > 1000000 ? "medium" : "low",
-          category: "Data Breach",
-          description: breach.description,
-          pwnCount: breach.pwn_count
-        });
-      });
-
-      // Add Hunter.io discovered emails as separate footprint items
-      if (data.hunter_data.discover_emails) {
-        data.hunter_data.discover_emails.forEach((emailData: any, index: number) => {
-          footprintItems.push({
-            id: `hunter-discover-${index}`,
-            siteName: emailData.domain || data.hunter_data.domain,
-            url: emailData.domain || data.hunter_data.domain,
-            dataFound: ["Email Address", "Public Profile", ...(emailData.sources || [])],
-            lastSeen: new Date(emailData.last_seen_on || Date.now()).toISOString(),
-            riskLevel: emailData.confidence > 90 ? "high" : emailData.confidence > 50 ? "medium" : "low",
-            category: "Public Directory",
-            confidence: emailData.confidence
-          });
-        });
-      }
-
-      // Add Hunter.io domain search results
-      if (data.hunter_data.domain_search_emails) {
-        data.hunter_data.domain_search_emails.forEach((emailData: any, index: number) => {
-          footprintItems.push({
-            id: `hunter-domain-${index}`,
-            siteName: `${emailData.first_name || ''} ${emailData.last_name || ''}`.trim() || emailData.value,
-            url: emailData.domain || data.hunter_data.domain,
-            dataFound: ["Email Address", "Name", "Position", "Phone"].filter(Boolean),
-            lastSeen: new Date().toISOString(),
-            riskLevel: emailData.confidence > 90 ? "high" : emailData.confidence > 50 ? "medium" : "low",
-            category: emailData.type === "personal" ? "Personal Email" : "Corporate Email",
-            confidence: emailData.confidence
-          });
-        });
-      }
-
-      // Add Hunter.io domain data as footprint item
-      if (data.hunter_data.domain) {
-        const domainRisk = data.hunter_data.disposable ? "low" : 
-                          data.hunter_data.webmail ? "medium" : "high";
-        
-        footprintItems.push({
-          id: "hunter-domain",
-          siteName: data.hunter_data.domain,
-          url: data.hunter_data.domain,
-          dataFound: [
-            "Domain Information", 
-            "Email Pattern",
-            ...(data.hunter_data.country ? [`Location: ${data.hunter_data.country}`] : []),
-            ...(data.hunter_data.disposable ? ["Disposable Email"] : []),
-            ...(data.hunter_data.webmail ? ["Webmail Service"] : ["Corporate Domain"])
-          ],
-          lastSeen: new Date().toISOString(),
-          riskLevel: domainRisk,
-          category: data.hunter_data.webmail ? "Webmail Provider" : "Corporate Domain"
-        });
-      }
-
-      setFootprints(footprintItems);
+      loadFootprintData(data);
+      // Save to localStorage for future visits
+      localStorage.setItem('latestScanResult', JSON.stringify(data));
 
       toast({
         title: "Search Complete",
@@ -218,26 +244,41 @@ export const Footprints = () => {
         </p>
       </div>
 
-      {/* Search Form */}
-      <div className="glass p-md rounded-2xl space-y-sm">
-        <div className="flex gap-sm">
-          <Input
-            type="email"
-            placeholder="Enter email address to search..."
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="flex-1"
-            disabled={loading}
-          />
-          <Button onClick={searchFootprint} disabled={loading || !email}>
-            {loading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Search className="w-4 h-4" />
-            )}
+      {/* Search Form - Only show if no results or user wants to search different email */}
+      {(showSearchForm || footprints.length === 0) && (
+        <div className="glass p-md rounded-2xl space-y-sm">
+          <div className="flex gap-sm">
+            <Input
+              type="email"
+              placeholder="Enter email address to search..."
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="flex-1"
+              disabled={loading}
+            />
+            <Button onClick={searchFootprint} disabled={loading || !email}>
+              {loading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4" />
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Show search different email button if results are loaded */}
+      {footprints.length > 0 && !showSearchForm && (
+        <div className="text-center">
+          <Button 
+            variant="outline" 
+            onClick={() => setShowSearchForm(true)}
+            className="glass border-accent/20 hover:bg-accent/10"
+          >
+            Search Different Email
           </Button>
         </div>
-      </div>
+      )}
 
       {footprintData && (
         <div className="glass p-md rounded-2xl space-y-sm">
