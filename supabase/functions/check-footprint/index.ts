@@ -478,7 +478,7 @@ serve(async (req) => {
         checked: true
       } : { checked: false },
       recommendations,
-      summary: `Found ${totalBreaches} total data breaches (${hibpBreaches.length} from HIBP, ${xonData.breaches.length} from XposedOrNot) and ${totalEmails} public email exposures${passwordCheck?.isPwned ? `, password compromised ${passwordCheck.pwnCount} times` : ''}. Privacy score: ${score}/100.${emailRep?.reputation ? ' Reputation: ' + emailRep.reputation : ''}`
+      summary: `Found ${totalBreaches} data breach${totalBreaches !== 1 ? 'es' : ''} and ${totalEmails} public email exposure${totalEmails !== 1 ? 's' : ''}${passwordCheck?.isPwned ? `, password compromised ${passwordCheck.pwnCount} times` : ''}. Privacy score: ${score}/100.${emailRep?.reputation ? ' Reputation: ' + emailRep.reputation : ''}`
     };
 
     // Store in database if user_id provided
