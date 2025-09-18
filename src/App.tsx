@@ -9,6 +9,7 @@ import { History } from "./pages/History";
 import { DeletionRequest } from "./pages/DeletionRequest";
 import { AISummary } from "./pages/AISummary";
 import { Footprints } from "./pages/Footprints";
+import SocialMedia from "./pages/SocialMedia";
 import { Login } from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -28,6 +29,7 @@ const App = () => (
           <Route path="deletion-request" element={<DeletionRequest />} />
           <Route path="ai-summary" element={<AISummary />} />
           <Route path="footprints" element={<Footprints />} />
+          <Route path="social-media" element={<SocialMedia />} />
         </Route>
         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
         <Route path="*" element={<NotFound />} />

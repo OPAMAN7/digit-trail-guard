@@ -229,6 +229,41 @@ async function checkEmailRep(email: string): Promise<any | null> {
   }
 }
 
+// Check social media presence
+async function checkSocialMedia(email: string): Promise<any> {
+  const cacheKey = `social_${email}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return cached;
+
+  try {
+    if (!rapidApiKey) {
+      console.log('RapidAPI key not configured');
+      return { error: 'API key not configured' };
+    }
+
+    const response = await fetch(`https://email-social-media-checker.p.rapidapi.com/check_email?email=${encodeURIComponent(email)}`, {
+      method: 'GET',
+      headers: {
+        'x-rapidapi-key': rapidApiKey,
+        'x-rapidapi-host': 'email-social-media-checker.p.rapidapi.com'
+      },
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (!response.ok) {
+      console.error('Social media API error:', response.status, response.statusText);
+      return { error: `API request failed: ${response.status}` };
+    }
+
+    const data = await response.json();
+    setCachedData(cacheKey, data);
+    return data;
+  } catch (error) {
+    console.error('Error checking social media:', error);
+    return { error: error.message };
+  }
+}
+
 async function checkPwnedPasswords(password: string): Promise<{ isPwned: boolean; pwnCount: number }> {
   try {
     // Generate SHA-1 hash of the password
@@ -415,11 +450,12 @@ serve(async (req) => {
     console.log(`Checking footprint for email: ${email}`);
 
     // Check all data sources in parallel
-    const [hibpBreaches, xonData, hunterData, emailRep] = await Promise.all([
+    const [hibpBreaches, xonData, hunterData, emailRep, socialMediaData] = await Promise.all([
       checkHaveIBeenPwned(email),
       checkXposedOrNot(email),
       checkHunterIO(email),
-      checkEmailRep(email)
+      checkEmailRep(email),
+      checkSocialMedia(email)
     ]);
     
     console.log(`Found ${hibpBreaches.length} HIBP breaches and ${xonData.breaches.length} XposedOrNot breaches`);
@@ -496,6 +532,7 @@ serve(async (req) => {
         pwn_count: passwordCheck.pwnCount,
         checked: true
       } : { checked: false },
+      social_media: socialMediaData,
       recommendations,
       summary: `Found ${totalBreaches} data breach${totalBreaches !== 1 ? 'es' : ''} and ${totalEmails} public email exposure${totalEmails !== 1 ? 's' : ''}${passwordCheck?.isPwned ? `, password compromised ${passwordCheck.pwnCount} times` : ''}. Privacy score: ${score}/100.${emailRep?.reputation ? ' Reputation: ' + emailRep.reputation : ''}`
     };

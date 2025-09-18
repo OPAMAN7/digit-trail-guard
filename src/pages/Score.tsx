@@ -14,6 +14,7 @@ interface ScanResult {
   breaches: any[];
   hunter_data: any;
   emailrep: any;
+  social_media?: any;
   recommendations: string[];
   summary: string;
 }
@@ -134,6 +135,13 @@ export const Score = () => {
           title="Last Seen"
           description="Detailed view of where your data was found online"
           onClick={() => navigate("/footprints")}
+          variant="accent"
+        />
+        <FeatureCard
+          icon={Search}
+          title="Social Media"
+          description="Check which social platforms your email is associated with"
+          onClick={() => navigate("/social-media")}
           variant="accent"
         />
       </div>
