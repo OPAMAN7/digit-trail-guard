@@ -100,7 +100,7 @@ async function checkHaveIBeenPwned(email: string): Promise<any[]> {
   }
 }
 
-async function checkXposedOrNot(email: string): Promise<{ breaches: string[], analytics: any }> {
+async function checkXposedOrNot(email: string): Promise<{ breaches: string[], analytics: any, detailed: any }> {
   const cacheKey = `xon_${email}`;
   const cached = getCachedData(cacheKey);
   if (cached) return cached;
@@ -122,26 +122,39 @@ async function checkXposedOrNot(email: string): Promise<{ breaches: string[], an
       console.log('XposedOrNot basic API returned:', basicResponse.status);
     }
 
-    // Try to get detailed analytics (this might not always work without API key)
+    // Try to get detailed analytics with all components
     let analytics = null;
+    let detailed = null;
     try {
       const analyticsResponse = await fetch(`https://api.xposedornot.com/v1/breach-analytics?email=${encodeURIComponent(email)}`, {
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(15000)
       });
       if (analyticsResponse.ok) {
-        analytics = await analyticsResponse.json();
+        const fullAnalytics = await analyticsResponse.json();
+        analytics = fullAnalytics;
+        
+        // Extract detailed information for better organization
+        detailed = {
+          breachesSummary: fullAnalytics.BreachesSummary || null,
+          exposedBreaches: fullAnalytics.ExposedBreaches || null,
+          breachMetrics: fullAnalytics.BreachMetrics || null,
+          xposedData: fullAnalytics.xposed_data || null,
+          pastesSummary: fullAnalytics.PastesSummary || null,
+          exposedPastes: fullAnalytics.ExposedPastes || null,
+          pasteMetrics: fullAnalytics.PasteMetrics || null
+        };
       }
     } catch (error) {
       console.log('XposedOrNot analytics not available:', error);
     }
 
-    const result = { breaches, analytics };
+    const result = { breaches, analytics, detailed };
     console.log(`XposedOrNot found ${breaches.length} breaches for: ${email}`);
     setCachedData(cacheKey, result);
     return result;
   } catch (error) {
     console.error('Error checking XposedOrNot:', error);
-    return { breaches: [], analytics: null };
+    return { breaches: [], analytics: null, detailed: null };
   }
 }
 
@@ -261,7 +274,7 @@ async function checkPwnedPasswords(password: string): Promise<{ isPwned: boolean
   }
 }
 
-function calculatePrivacyScore(hibpBreaches: any[], xonData: { breaches: string[], analytics: any }, hunterData: any, emailRep: any | null, passwordCheck?: { isPwned: boolean; pwnCount: number }): number {
+function calculatePrivacyScore(hibpBreaches: any[], xonData: { breaches: string[], analytics: any, detailed: any }, hunterData: any, emailRep: any | null, passwordCheck?: { isPwned: boolean; pwnCount: number }): number {
   let score = 100;
 
   // Combine breach counts from both sources
@@ -311,7 +324,7 @@ function calculatePrivacyScore(hibpBreaches: any[], xonData: { breaches: string[
   return Math.max(score, 0);
 }
 
-function generateRecommendations(hibpBreaches: any[], xonData: { breaches: string[], analytics: any }, hunterData: any, emailRep: any | null, passwordCheck?: { isPwned: boolean; pwnCount: number }): string[] {
+function generateRecommendations(hibpBreaches: any[], xonData: { breaches: string[], analytics: any, detailed: any }, hunterData: any, emailRep: any | null, passwordCheck?: { isPwned: boolean; pwnCount: number }): string[] {
   const recommendations: string[] = [];
 
   const totalBreaches = hibpBreaches.length + xonData.breaches.length;
@@ -470,6 +483,12 @@ serve(async (req) => {
         webmail: domain?.webmail || false,
         discover_emails: discoverEmails,
         domain_search_emails: domainEmails
+      },
+      xposed_or_not: {
+        breach_count: xonData.breaches.length,
+        breaches: xonData.breaches,
+        analytics: xonData.analytics,
+        detailed: xonData.detailed
       },
       emailrep: emailRep || null,
       password_check: passwordCheck ? {
