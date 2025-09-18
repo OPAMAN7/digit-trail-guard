@@ -100,6 +100,51 @@ async function checkHaveIBeenPwned(email: string): Promise<any[]> {
   }
 }
 
+async function checkXposedOrNot(email: string): Promise<{ breaches: string[], analytics: any }> {
+  const cacheKey = `xon_${email}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return cached;
+
+  try {
+    // First, check for basic breaches
+    const basicResponse = await fetch(`https://api.xposedornot.com/v1/check-email/${encodeURIComponent(email)}`, {
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    let breaches: string[] = [];
+    
+    if (basicResponse.ok) {
+      const basicData = await basicResponse.json();
+      if (basicData.breaches && Array.isArray(basicData.breaches) && basicData.breaches.length > 0) {
+        breaches = basicData.breaches[0] || [];
+      }
+    } else if (basicResponse.status !== 404) {
+      console.log('XposedOrNot basic API returned:', basicResponse.status);
+    }
+
+    // Try to get detailed analytics (this might not always work without API key)
+    let analytics = null;
+    try {
+      const analyticsResponse = await fetch(`https://api.xposedornot.com/v1/breach-analytics?email=${encodeURIComponent(email)}`, {
+        signal: AbortSignal.timeout(10000)
+      });
+      if (analyticsResponse.ok) {
+        analytics = await analyticsResponse.json();
+      }
+    } catch (error) {
+      console.log('XposedOrNot analytics not available:', error);
+    }
+
+    const result = { breaches, analytics };
+    console.log(`XposedOrNot found ${breaches.length} breaches for: ${email}`);
+    setCachedData(cacheKey, result);
+    return result;
+  } catch (error) {
+    console.error('Error checking XposedOrNot:', error);
+    return { breaches: [], analytics: null };
+  }
+}
+
 async function checkHunterIO(email: string): Promise<any> {
   const cacheKey = `hunter_${email}`;
   const cached = getCachedData(cacheKey);
@@ -216,12 +261,23 @@ async function checkPwnedPasswords(password: string): Promise<{ isPwned: boolean
   }
 }
 
-function calculatePrivacyScore(breaches: any[], hunterData: any, emailRep: any | null, passwordCheck?: { isPwned: boolean; pwnCount: number }): number {
+function calculatePrivacyScore(hibpBreaches: any[], xonData: { breaches: string[], analytics: any }, hunterData: any, emailRep: any | null, passwordCheck?: { isPwned: boolean; pwnCount: number }): number {
   let score = 100;
 
-  // Deduct points for breaches
-  if (breaches.length > 0) {
-    score -= Math.min(breaches.length * 15, 70);
+  // Combine breach counts from both sources
+  const totalBreaches = hibpBreaches.length + xonData.breaches.length;
+  
+  // Deduct points for breaches (combined from both sources)
+  if (totalBreaches > 0) {
+    score -= Math.min(totalBreaches * 12, 70);
+  }
+
+  // Additional deduction for high-risk breaches from XposedOrNot analytics
+  if (xonData.analytics?.BreachMetrics?.risk?.[0]) {
+    const riskScore = xonData.analytics.BreachMetrics.risk[0].risk_score;
+    if (riskScore >= 8) score -= 15; // High risk
+    else if (riskScore >= 5) score -= 10; // Medium risk
+    else if (riskScore >= 3) score -= 5; // Low risk
   }
 
   // Deduct points for public exposure from discover API
@@ -255,13 +311,32 @@ function calculatePrivacyScore(breaches: any[], hunterData: any, emailRep: any |
   return Math.max(score, 0);
 }
 
-function generateRecommendations(breaches: any[], hunterData: any, emailRep: any | null, passwordCheck?: { isPwned: boolean; pwnCount: number }): string[] {
+function generateRecommendations(hibpBreaches: any[], xonData: { breaches: string[], analytics: any }, hunterData: any, emailRep: any | null, passwordCheck?: { isPwned: boolean; pwnCount: number }): string[] {
   const recommendations: string[] = [];
 
-  if (breaches.length > 0) {
+  const totalBreaches = hibpBreaches.length + xonData.breaches.length;
+  
+  if (totalBreaches > 0) {
     recommendations.push('Change passwords for affected accounts immediately');
     recommendations.push('Enable two-factor authentication on all important accounts');
     recommendations.push('Monitor your credit reports regularly');
+    
+    // Add specific recommendations based on XposedOrNot analytics
+    if (xonData.analytics?.BreachMetrics) {
+      const riskData = xonData.analytics.BreachMetrics.risk?.[0];
+      if (riskData && riskData.risk_score >= 7) {
+        recommendations.push('High-risk breaches detected - consider identity monitoring services');
+      }
+      
+      const passwordStrength = xonData.analytics.BreachMetrics.passwords_strength?.[0];
+      if (passwordStrength) {
+        if (passwordStrength.PlainText > 0) {
+          recommendations.push('Some breaches exposed passwords in plain text - change all passwords immediately');
+        } else if (passwordStrength.EasyToCrack > 0) {
+          recommendations.push('Some breaches had easily crackable passwords - use stronger passwords');
+        }
+      }
+    }
   }
 
   const totalEmails = (hunterData?.discover?.data?.emails?.length || 0) + (hunterData?.domain_search?.data?.emails?.length || 0);
@@ -289,7 +364,7 @@ function generateRecommendations(breaches: any[], hunterData: any, emailRep: any
     recommendations.push('Consider using a password manager to generate secure passwords');
   }
 
-  if (breaches.length === 0 && totalEmails === 0 && !emailRep?.suspicious && !passwordCheck?.isPwned) {
+  if (totalBreaches === 0 && totalEmails === 0 && !emailRep?.suspicious && !passwordCheck?.isPwned) {
     recommendations.push('Your digital footprint appears minimal - maintain good privacy practices');
     recommendations.push('Use unique passwords for each account');
   }
@@ -326,17 +401,15 @@ serve(async (req) => {
 
     console.log(`Checking footprint for email: ${email}`);
 
-    // Check HaveIBeenPwned
-    const breaches = await checkHaveIBeenPwned(email);
-    console.log(`Found ${breaches.length} breaches`);
-
-    // Check Hunter.io
-    const hunterData = await checkHunterIO(email);
-    console.log('Hunter.io data retrieved');
-
-    // Check EmailRep for reputation/risk
-    const emailRep = await checkEmailRep(email);
-    console.log('EmailRep data retrieved');
+    // Check all data sources in parallel
+    const [hibpBreaches, xonData, hunterData, emailRep] = await Promise.all([
+      checkHaveIBeenPwned(email),
+      checkXposedOrNot(email),
+      checkHunterIO(email),
+      checkEmailRep(email)
+    ]);
+    
+    console.log(`Found ${hibpBreaches.length} HIBP breaches and ${xonData.breaches.length} XposedOrNot breaches`);
 
     // Check password if provided (optional for additional security analysis)
     let passwordCheck = null;
@@ -346,10 +419,10 @@ serve(async (req) => {
     }
 
     // Calculate privacy score
-    const score = calculatePrivacyScore(breaches, hunterData, emailRep, passwordCheck);
+    const score = calculatePrivacyScore(hibpBreaches, xonData, hunterData, emailRep, passwordCheck);
 
     // Generate recommendations
-    const recommendations = generateRecommendations(breaches, hunterData, emailRep, passwordCheck);
+    const recommendations = generateRecommendations(hibpBreaches, xonData, hunterData, emailRep, passwordCheck);
 
     // Extract data from Hunter.io responses
     const discoverEmails = hunterData?.discover?.data?.emails || [];
@@ -358,19 +431,36 @@ serve(async (req) => {
     
     const domain = hunterData?.discover?.data?.domain || hunterData?.domain_search?.data?.domain;
 
-    const result = {
-      email,
-      score,
-      breach_count: breaches.length,
-      platforms_found: totalEmails,
-      breaches: breaches.map((breach: any) => ({
+    // Combine breach data from both sources
+    const combinedBreaches = [
+      ...hibpBreaches.map((breach: any) => ({
         name: breach.Name,
         domain: breach.Domain,
         breach_date: breach.BreachDate,
         pwn_count: breach.PwnCount,
         description: breach.Description,
-        data_classes: breach.DataClasses
+        data_classes: breach.DataClasses,
+        source: 'HaveIBeenPwned'
       })),
+      ...xonData.breaches.map((breachName: string) => ({
+        name: breachName,
+        domain: null,
+        breach_date: null,
+        pwn_count: null,
+        description: `Breach detected in XposedOrNot database`,
+        data_classes: [],
+        source: 'XposedOrNot'
+      }))
+    ];
+
+    const totalBreaches = combinedBreaches.length;
+
+    const result = {
+      email,
+      score,
+      breach_count: totalBreaches,
+      platforms_found: totalEmails,
+      breaches: combinedBreaches,
       hunter_data: {
         domain: domain?.domain || null,
         emails_found: totalEmails,
@@ -388,7 +478,7 @@ serve(async (req) => {
         checked: true
       } : { checked: false },
       recommendations,
-      summary: `Found ${breaches.length} data breaches and ${totalEmails} public email exposures${passwordCheck?.isPwned ? `, password compromised ${passwordCheck.pwnCount} times` : ''}. Privacy score: ${score}/100.${emailRep?.reputation ? ' Reputation: ' + emailRep.reputation : ''}`
+      summary: `Found ${totalBreaches} total data breaches (${hibpBreaches.length} from HIBP, ${xonData.breaches.length} from XposedOrNot) and ${totalEmails} public email exposures${passwordCheck?.isPwned ? `, password compromised ${passwordCheck.pwnCount} times` : ''}. Privacy score: ${score}/100.${emailRep?.reputation ? ' Reputation: ' + emailRep.reputation : ''}`
     };
 
     // Store in database if user_id provided
@@ -399,7 +489,7 @@ serve(async (req) => {
           .insert({
             user_id,
             score,
-            breach_count: breaches.length,
+            breach_count: totalBreaches,
             platforms_found: totalEmails.toString(),
             summary: result.summary
           });
