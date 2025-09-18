@@ -17,6 +17,16 @@ interface ScanResult {
   platforms_found: number;
   breaches: any[];
   hunter_data: any;
+  social_media?: {
+    platforms: Array<{
+      platform: string;
+      found: boolean;
+      username?: string;
+      url?: string;
+    }>;
+    total_platforms: number;
+    error?: string;
+  };
   password_check: {
     is_pwned: boolean;
     pwn_count: number;
@@ -190,16 +200,22 @@ export const Home = () => {
           </div>
 
           {/* Quick Stats */}
-          <div className="grid grid-cols-2 gap-sm">
+          <div className="grid grid-cols-3 gap-sm">
             <div className="glass p-sm rounded-xl text-center">
               <div className="text-lg font-bold text-destructive">{scanResult.breach_count}</div>
               <div className="text-xs text-muted-foreground">
-                {scanResult.breach_count === 0 ? "No data breaches found in past 7 days" : "Data Breaches"}
+                {scanResult.breach_count === 0 ? "No Breaches" : "Data Breaches"}
               </div>
             </div>
             <div className="glass p-sm rounded-xl text-center">
               <div className="text-lg font-bold text-accent">{scanResult.platforms_found}</div>
               <div className="text-xs text-muted-foreground">Platforms Found</div>
+            </div>
+            <div className="glass p-sm rounded-xl text-center">
+              <div className="text-lg font-bold text-primary">
+                {scanResult.social_media?.platforms?.filter(p => p.found)?.length || 0}
+              </div>
+              <div className="text-xs text-muted-foreground">Social Media</div>
             </div>
           </div>
 
@@ -219,7 +235,7 @@ export const Home = () => {
           )}
 
           {/* Action Buttons */}
-          <div className="grid grid-cols-2 gap-sm">
+          <div className="grid grid-cols-3 gap-sm">
             <Button 
               onClick={() => navigate("/footprints")} 
               className="glass border-accent/20 hover:bg-accent/10"
@@ -229,12 +245,20 @@ export const Home = () => {
               View Details
             </Button>
             <Button 
-              onClick={() => navigate("/ai-summary")} 
+              onClick={() => navigate("/social-media")} 
               className="glass border-primary/20 hover:bg-primary/10"
               variant="outline"
             >
+              <Search className="w-4 h-4 mr-2" />
+              Social Media
+            </Button>
+            <Button 
+              onClick={() => navigate("/ai-summary")} 
+              className="glass border-secondary/20 hover:bg-secondary/10"
+              variant="outline"
+            >
               <AlertTriangle className="w-4 h-4 mr-2" />
-              Get Recommendations
+              AI Summary
             </Button>
           </div>
         </div>

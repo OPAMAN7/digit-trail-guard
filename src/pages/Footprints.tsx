@@ -371,30 +371,42 @@ export const Footprints = () => {
                   <div className="text-sm space-y-2">
                     {Array.isArray(footprintData.xposed_or_not.detailed.exposedBreaches) ? (
                       <div className="space-y-3">
-                        {footprintData.xposed_or_not.detailed.exposedBreaches.map((breach: any, index: number) => (
-                          <div key={index} className="bg-muted/50 p-3 rounded-lg">
-                            <h4 className="font-medium text-destructive">{breach.name || breach.Name || `Breach ${index + 1}`}</h4>
-                            {breach.description && <p className="text-xs mt-1 text-muted-foreground">{breach.description}</p>}
-                            {breach.domain && <p className="text-xs"><strong>Domain:</strong> {breach.domain}</p>}
-                            {breach.industry && <p className="text-xs"><strong>Industry:</strong> {breach.industry}</p>}
-                            {breach.risk_level && <p className="text-xs"><strong>Risk Level:</strong> {breach.risk_level}</p>}
-                            {breach.year && <p className="text-xs"><strong>Year:</strong> {breach.year}</p>}
-                            {breach.records && <p className="text-xs"><strong>Records:</strong> {breach.records.toLocaleString()}</p>}
-                            {breach.exposed_data && (
-                              <div className="text-xs mt-2">
-                                <strong>Exposed Data:</strong>
-                                <div className="flex flex-wrap gap-1 mt-1">
-                                  {Array.isArray(breach.exposed_data) ? 
-                                    breach.exposed_data.map((data: string, i: number) => (
-                                      <Badge key={i} variant="outline" className="text-xs">{data}</Badge>
-                                    )) : 
-                                    <span>{breach.exposed_data}</span>
-                                  }
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ))}
+                         {footprintData.xposed_or_not.detailed.exposedBreaches.map((breach: any, index: number) => (
+                           <div key={index} className="bg-muted/50 p-3 rounded-lg">
+                             <div className="flex items-center justify-between mb-2">
+                               <h4 className="font-medium text-destructive">{breach.name || breach.Name || `Breach ${index + 1}`}</h4>
+                               {breach.domain && (
+                                 <Button variant="outline" size="sm" asChild>
+                                   <a href={`https://${breach.domain}`} target="_blank" rel="noopener noreferrer">
+                                     <ExternalLink className="w-3 h-3 mr-1" />
+                                     Visit Site
+                                   </a>
+                                 </Button>
+                               )}
+                             </div>
+                             {breach.description && <p className="text-xs mt-1 text-muted-foreground">{breach.description}</p>}
+                             <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
+                               {breach.domain && <p><strong>Domain:</strong> {breach.domain}</p>}
+                               {breach.industry && <p><strong>Industry:</strong> {breach.industry}</p>}
+                               {breach.risk_level && <p><strong>Risk Level:</strong> {breach.risk_level}</p>}
+                               {breach.year && <p><strong>Year:</strong> {breach.year}</p>}
+                               {breach.records && <p><strong>Records:</strong> {breach.records.toLocaleString()}</p>}
+                             </div>
+                             {breach.exposed_data && (
+                               <div className="text-xs mt-2">
+                                 <strong>Exposed Data:</strong>
+                                 <div className="flex flex-wrap gap-1 mt-1">
+                                   {Array.isArray(breach.exposed_data) ? 
+                                     breach.exposed_data.map((data: string, i: number) => (
+                                       <Badge key={i} variant="outline" className="text-xs">{data}</Badge>
+                                     )) : 
+                                     <span>{breach.exposed_data}</span>
+                                   }
+                                 </div>
+                               </div>
+                             )}
+                           </div>
+                         ))}
                       </div>
                     ) : (
                       <pre className="bg-muted/50 p-2 rounded text-xs overflow-x-auto">

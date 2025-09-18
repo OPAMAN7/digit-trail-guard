@@ -450,13 +450,23 @@ serve(async (req) => {
     console.log(`Checking footprint for email: ${email}`);
 
     // Check all data sources in parallel
-    const [hibpBreaches, xonData, hunterData, emailRep, socialMediaData] = await Promise.all([
+    let socialMediaData = null;
+    const [hibpBreaches, xonData, hunterData, emailRep] = await Promise.all([
       checkHaveIBeenPwned(email),
       checkXposedOrNot(email),
       checkHunterIO(email),
-      checkEmailRep(email),
-      checkSocialMedia(email)
+      checkEmailRep(email)
     ]);
+
+    // Social media check
+    console.log('Checking social media...');
+    try {
+      socialMediaData = await checkSocialMedia(email);
+      console.log('Social media data:', socialMediaData);
+    } catch (error) {
+      console.error('Error checking social media:', error);
+      socialMediaData = { platforms: [], total_platforms: 0, error: error.message };
+    }
     
     console.log(`Found ${hibpBreaches.length} HIBP breaches and ${xonData.breaches.length} XposedOrNot breaches`);
 
