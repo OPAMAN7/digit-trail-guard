@@ -236,21 +236,25 @@ async function checkSocialMedia(email: string): Promise<any> {
   if (cached) return cached;
 
   try {
+    console.log(`Checking social media for email: ${email}`);
     const response = await fetch(`https://email-social-media-checker.p.rapidapi.com/check_email?email=${encodeURIComponent(email)}`, {
       method: 'GET',
       headers: {
         'x-rapidapi-key': '781cfa26ffmsh4871ddbc70a8861p1b5ed9jsnc5163050e3da',
         'x-rapidapi-host': 'email-social-media-checker.p.rapidapi.com'
       },
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(30000) // Increased timeout to 30 seconds
     });
 
     if (!response.ok) {
       console.error('Social media API error:', response.status, response.statusText);
-      return { error: `API request failed: ${response.status}` };
+      const errorText = await response.text();
+      console.error('Error response:', errorText);
+      return { error: `API request failed: ${response.status} - ${errorText}` };
     }
 
     const data = await response.json();
+    console.log('Social media API response:', data);
     setCachedData(cacheKey, data);
     return data;
   } catch (error) {
