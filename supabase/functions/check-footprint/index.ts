@@ -236,15 +236,10 @@ async function checkSocialMedia(email: string): Promise<any> {
   if (cached) return cached;
 
   try {
-    if (!rapidApiKey) {
-      console.log('RapidAPI key not configured');
-      return { error: 'API key not configured' };
-    }
-
     const response = await fetch(`https://email-social-media-checker.p.rapidapi.com/check_email?email=${encodeURIComponent(email)}`, {
       method: 'GET',
       headers: {
-        'x-rapidapi-key': rapidApiKey,
+        'x-rapidapi-key': '781cfa26ffmsh4871ddbc70a8861p1b5ed9jsnc5163050e3da',
         'x-rapidapi-host': 'email-social-media-checker.p.rapidapi.com'
       },
       signal: AbortSignal.timeout(15000)
