@@ -338,8 +338,6 @@ export const Footprints = () => {
               </p>
             </div>
           )}
-        </div>
-          )}
 
           {/* XposedOrNot Detailed Analysis */}
           {footprintData.xposed_or_not?.detailed && (
